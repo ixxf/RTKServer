@@ -1,3 +1,4 @@
+#pragma once    
 #include <iostream>
 #include <sys/socket.h>
 #include <arpa/inet.h>  //sockaddr_in结构体

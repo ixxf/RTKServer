@@ -71,7 +71,7 @@ private:
     char buffer[1024];
 
 public:
-    //参数1:接收方端口  参数2:发送方端口
+    //参数1:发送方端口  参数2:接收方端口
     RTKServer( int sendPort=9091,int recvPort=9092)
     :_server_State(false),_recvDateSocket(),_sendDateSocket(),_rtkEpoll()
     {
@@ -93,14 +93,17 @@ public:
         std::cout<<"_sendServerFd:"<<_sendServerFd<<std::endl;
 
         //添加服务器fd到epoll
-        _rtkEpoll.add(_recvServerFd,EPOLLIN|EPOLLET);
-        _rtkEpoll.add(_sendServerFd,EPOLLIN|EPOLLET);
+        _rtkEpoll.add(_recvServerFd,EPOLLIN);
+        _rtkEpoll.add(_sendServerFd,EPOLLIN);
 
         _recvClient=-1;
         _sendClient=-1;
 
         _recvIsConnect=0;
         _sendIsConnect=0;
+
+        //忽略SIGPIPE后，写操作会返回-1，并设置errno为EPIPE
+        std::signal(SIGPIPE, SIG_IGN); // 忽略SIGPIPE
     }
 
     ~RTKServer(){
@@ -219,7 +222,7 @@ private:
     //新数据到达,处理
     void handleRTKDate(int fd){
             //循环接收数据
-            while (true) {
+            // while (true) {
                 ssize_t bytes_received = recv(fd, buffer, sizeof(buffer), 0);
 
                 if (bytes_received > 0) {
@@ -234,8 +237,7 @@ private:
                                 std::cout << "对端关闭连接" << std::endl;
                             } else {
                                 if (errno == EWOULDBLOCK || errno == EAGAIN) {
-                                    std::cout << "发送缓冲区已满，稍后重试" << std::endl;
-                                    return; // 或者采取其他重试策略
+                                    std::cout << "发送缓冲区已满" << std::endl;
                                 } else if (errno == ECONNRESET || errno == EPIPE) {
                                     std::cout << "对端异常关闭连接" << std::endl;
                                 } else {
@@ -245,6 +247,7 @@ private:
                             std::cout << "关闭recv连接" << std::endl;
                             _recvIsConnect = false;
                             close(_recvClient);
+                            _recvClient=-1;
                         }
                     }
                 } else if (bytes_received == 0) {
@@ -264,14 +267,13 @@ private:
                         perror("recv failed");
                         _rtkEpoll.remove(fd);
                         close(fd);
-                        fd=-1;
                         _sendClient=-1;
                         _sendIsConnect=false;
                         return;
                     }
                 }
         }
-    }
+    // }
 
 };
 
