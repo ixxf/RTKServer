@@ -3,6 +3,7 @@
 #include "MyEpoll.h"
 #include <errno.h>
 #include <cstring>
+#include <csignal>
 
 namespace RTK{
 
@@ -51,6 +52,9 @@ private:
     //客户端是否连接
     bool _recvIsConnect;
     bool _sendIsConnect;
+
+    //用于给发送客户端返回响应
+    uint8_t _times;
 private:
     //客户端套接字
     int _recvClient;
@@ -102,7 +106,7 @@ public:
         _recvIsConnect=0;
         _sendIsConnect=0;
 
-        //忽略SIGPIPE后，写操作会返回-1，并设置errno为EPIPE
+        //忽略SIGPIPE后，写已关闭套接字会返回-1，并设置errno为EPIPE
         std::signal(SIGPIPE, SIG_IGN); // 忽略SIGPIPE
     }
 
@@ -215,65 +219,74 @@ private:
         setReusable(_sendClient,true);
         setNonBlocking(_sendClient,true);
 
+        //重置次数
+        _times=30;
+
         //添加到检测列表
         _rtkEpoll.add(_sendClient,EPOLLIN|EPOLLET);
     }
 
     //新数据到达,处理
     void handleRTKDate(int fd){
-            //循环接收数据
-            // while (true) {
-                ssize_t bytes_received = recv(fd, buffer, sizeof(buffer), 0);
+            //接收数据
+            ssize_t bytes_received = recv(fd, buffer, sizeof(buffer), 0);
 
-                if (bytes_received > 0) {
-                    // 处理接收到的数据
-                    buffer[bytes_received]=0;
-                    //如果接收客户端连接中,发送数据给它
-                    if(_recvIsConnect==true){
-                        std::cout << "新发送" << std::endl;
-                        ssize_t sent = send(_recvClient, buffer, strlen(buffer), 0);
-                        if (sent <= 0) {
-                            if (sent == 0) {
-                                std::cout << "对端关闭连接" << std::endl;
+            if (bytes_received > 0) {
+                // 处理接收到的数据
+                buffer[bytes_received]=0;
+                _times++;
+                //如果接收客户端连接中,发送数据给它
+                if(_recvIsConnect==true){
+                    std::cout << "新发送" << std::endl;
+                    ssize_t sent = send(_recvClient, buffer, strlen(buffer), MSG_NOSIGNAL);
+                    if (sent <= 0) {
+                        if (sent == 0) {
+                            std::cout << "对端关闭连接" << std::endl;
+                        } else {
+                            if (errno == EWOULDBLOCK || errno == EAGAIN) {
+                                std::cout << "发送缓冲区已满" << std::endl;
+                            } else if (errno == ECONNRESET || errno == EPIPE) {
+                                std::cout << "对端异常关闭连接" << std::endl;
                             } else {
-                                if (errno == EWOULDBLOCK || errno == EAGAIN) {
-                                    std::cout << "发送缓冲区已满" << std::endl;
-                                } else if (errno == ECONNRESET || errno == EPIPE) {
-                                    std::cout << "对端异常关闭连接" << std::endl;
-                                } else {
-                                    std::cout << "发送失败，错误码: " << errno << std::endl;
-                                }
+                                std::cout << "发送失败，错误码: " << errno << std::endl;
                             }
-                            std::cout << "关闭recv连接" << std::endl;
-                            _recvIsConnect = false;
-                            close(_recvClient);
-                            _recvClient=-1;
                         }
+                        std::cout << "关闭recv客户端连接" << std::endl;
+                        _recvIsConnect = false;
+                        close(_recvClient);
+                        _recvClient=-1;
                     }
-                } else if (bytes_received == 0) {
-                    // 对端关闭连接,关闭连接
-                    std::cout << "Connection closed by peer." << std::endl;
+                }
+            } else if (bytes_received == 0) {
+                // 对端关闭连接,关闭连接
+                std::cout << "Connection closed by peer." << std::endl;
+                _rtkEpoll.remove(fd);
+                close(fd);
+                _sendClient=-1;
+                _sendIsConnect=false;
+                return;
+            } else if (bytes_received == -1) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // 没有数据可读，退出循环
+                    std::cout << "No Data can recv." << std::endl;
+                    return;
+                } else {
+                    // 发生错误
+                    perror("发送客户端recv failed");
                     _rtkEpoll.remove(fd);
                     close(fd);
                     _sendClient=-1;
                     _sendIsConnect=false;
                     return;
-                } else if (bytes_received == -1) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                        // 没有数据可读，退出循环
-                        return;
-                    } else {
-                        // 发生错误
-                        perror("recv failed");
-                        _rtkEpoll.remove(fd);
-                        close(fd);
-                        _sendClient=-1;
-                        _sendIsConnect=false;
-                        return;
-                    }
                 }
-        }
-    // }
+            }
+
+            if(_sendIsConnect&&_times>=60){
+                _times=0;
+                send(fd,"putRtkOk",8,MSG_NOSIGNAL);
+            }
+            
+    }
 
 };
 

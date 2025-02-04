@@ -1,2 +1,2 @@
 main:main.cpp MyEpoll.h MySocket.h RTKServer.h
-	g++ main.cpp -o rtkServer -g
+	g++ main.cpp -o rtkServer

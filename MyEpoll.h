@@ -1,5 +1,4 @@
 #pragma once
-
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <stdexcept>
